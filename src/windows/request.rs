@@ -3,7 +3,7 @@ use windows::{
     core::PCWSTR,
     Win32::{
         Foundation::FALSE, Graphics::Gdi::{
-            GetBitmapBits, GetObjectW, BITMAP, BITMAPINFOHEADER, HBITMAP
+            GetBitmapBits, GetObjectW, BITMAP, BITMAPINFOHEADER, HBITMAP, HGDIOBJ
         }, Storage::FileSystem::FILE_ATTRIBUTE_NORMAL, UI::{
             Shell::{
                 ExtractIconExW, SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_SMALLICON, SHGFI_TYPENAME, SHGFI_USEFILEATTRIBUTES
@@ -55,7 +55,7 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, Error> {
         bmWidth: 0,
         bmWidthBytes: 0,
     };
-    unsafe {GetObjectW(icon_info.hbmColor, mem::size_of_val(&bmp_color) as i32, Some(&mut bmp_color as *mut _ as *mut _)) }; 
+    unsafe {GetObjectW(HGDIOBJ(icon_info.hbmColor.0), mem::size_of_val(&bmp_color) as i32, Some(&mut bmp_color as *mut _ as *mut _)) }; 
 
     let mut bmp_mask = BITMAP {
         bmBits: ptr::null_mut(),
@@ -66,7 +66,7 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, Error> {
         bmWidth: 0,
         bmWidthBytes: 0,
     };
-    unsafe {GetObjectW(icon_info.hbmMask, mem::size_of_val(&bmp_mask) as i32, Some(&mut bmp_mask as *mut _ as *mut _)) };
+    unsafe {GetObjectW(HGDIOBJ(icon_info.hbmMask.0), mem::size_of_val(&bmp_mask) as i32, Some(&mut bmp_mask as *mut _ as *mut _)) };
 
     fn get_bitmap_count(bitmap: &BITMAP)->i32 {
         let mut n_width_bytes = bitmap.bmWidthBytes;
@@ -88,15 +88,14 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, Error> {
     let complete_size = icon_header_size + icon_dir_size + info_header_size + bitmap_bytes_count + mask_bytes_count;
 
     let image_bytes_count = bitmap_bytes_count + mask_bytes_count;
-    let mut bytes = Vec::<u8>::with_capacity(complete_size);
-    unsafe { bytes.set_len(complete_size) };
+    let mut bytes = vec![0u8; complete_size];
 
     let iconheader = ICONHEADER { 
         id_reserved: 0, 
         id_type: 1, // Type 1 = ICON (type 2 = CURSOR)
         id_count: 1, // number of ICONDIRs
     };
-    let byte_ptr: *mut u8 = unsafe {mem::transmute(&iconheader) };
+    let byte_ptr: *const u8 = &iconheader as *const _ as *const u8;
     unsafe {ptr::copy_nonoverlapping(byte_ptr, bytes.as_mut_ptr(), icon_header_size)}; 
     let pos = icon_header_size;
 
@@ -118,7 +117,7 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, Error> {
         dw_bytes_in_res: (mem::size_of::<BITMAPINFOHEADER>() + image_bytes_count) as u32
     };
 
-    let byte_ptr: *mut u8 = unsafe { mem::transmute(&icon_dir) };
+    let byte_ptr: *const u8 = &icon_dir as *const _ as *const u8;
     unsafe { ptr::copy_nonoverlapping(byte_ptr, bytes[pos..].as_mut_ptr(), icon_dir_size) }; 
     let pos = pos + icon_dir_size;
 
@@ -135,12 +134,9 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, Error> {
         biXPelsPerMeter: 0,
         biYPelsPerMeter: 0
     };
-    let byte_ptr: *mut u8 = unsafe {mem::transmute(&bi_header) };
+    let byte_ptr: *const u8 = &bi_header as *const _ as *const u8;
     unsafe { ptr::copy_nonoverlapping(byte_ptr, bytes[pos..].as_mut_ptr(), info_header_size) }; 
     let pos = pos + info_header_size;
-
-    // write the RGBQUAD color table (for 16 and 256 colour icons)
-    if bmp_color.bmBitsPixel == 2 || bmp_color.bmBitsPixel == 8 {}        
 
     write_icon_data_to_memory(&mut bytes[pos..], icon_info.hbmColor, 
         &bmp_color, bitmap_bytes_count as usize);
@@ -207,6 +203,7 @@ fn extract_icon(path: &str, size: i32) -> HICON {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 struct ICONHEADER {
     id_reserved: i16, 
     id_type: i16,
@@ -215,6 +212,7 @@ struct ICONHEADER {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 struct ICONDIR {
     b_width: u8,
     b_height: u8,
@@ -228,8 +226,7 @@ struct ICONDIR {
 
 fn write_icon_data_to_memory(mem: &mut [u8], h_bitmap: HBITMAP, bmp: &BITMAP, bitmap_byte_count: usize) {
     unsafe {
-        let mut icon_data = Vec::<u8>::with_capacity(bitmap_byte_count);
-        icon_data.set_len(bitmap_byte_count);
+        let mut icon_data = vec![0u8; bitmap_byte_count];
 
         GetBitmapBits(h_bitmap, bitmap_byte_count as i32, icon_data.as_mut_ptr() as *mut _);
 
